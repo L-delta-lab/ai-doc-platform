@@ -1,0 +1,58 @@
+# 本地开发环境：仅中间件（api / worker / collab / web 在宿主机跑，保留热重载）
+# 用法：docker compose -f docker-compose.dev.yml up -d
+# 生产部署用 docker-compose.yml（P3 阶段另建），不要把本文件用于上线。
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kb-postgres
+    environment:
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: kb_dev
+      POSTGRES_DB: kb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: kb-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "no"]   # 开发环境无需持久化，省磁盘
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: kb-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: kb_dev
+      MINIO_ROOT_PASSWORD: kb_dev123
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web 控制台（建桶/查看文件用）
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  miniodata:
