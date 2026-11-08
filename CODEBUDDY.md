@@ -26,6 +26,7 @@ docker compose up --build                   # 全栈一键构建启动（P3 验�
 uvicorn app.main:app --reload --port 8000   # 工作目录为 api/；Swagger 在 /docs，ReDoc 在 /redoc
 alembic revision --autogenerate -m "描述"    # 由 SQLAlchemy 模型生成迁移，生成后必须人工复核
 alembic upgrade head                        # 应用迁移
+arq app.workers.main.WorkerSettings         # 启动 ARQ worker（摘要/Embedding/清理等异步任务）
 pytest                                      # 全量测试
 pytest tests/test_permission_service.py::test_xxx -q   # 单个用例
 ```
@@ -55,6 +56,7 @@ Nginx 单入口分流：`/` → web，`/api` → api，`/collab` → collab（We
 |---|---|---|
 | `web`：Next.js App Router + TS + Tailwind + shadcn/ui + Tiptap | 页面渲染、编辑器 UI、REST/SSE 调用、连接协同 WS | 业务规则 |
 | `api`：FastAPI + SQLAlchemy 2.0 async + Pydantic v2 | 认证鉴权、业务 CRUD、权限判定、签发协同 Token、AI/RAG、全文检索、文件上传 | 实时内容同步 |
+| `worker`：arq + Redis 队列 | 异步任务：摘要、Embedding、版本清理、审计落库 | HTTP 请求处理 |
 | `collab`：Hocuspocus + Yjs CRDT | 实时同步、冲突合并、在线状态、断线恢复 | 业务数据校验（只验 Token）；**不直连 PostgreSQL**（经 /internal 由 api 落库） |
 
 `api/` 内部分层固定为：`api/`（路由，只做参数校验 + 调 service）→ `services/`（业务逻辑）→ `models/`、`schemas/`、`db/`；`core/` 放配置、JWT、依赖注入（`get_db`、`get_current_user`、`require_doc_access`）。业务逻辑不要写进路由层。
@@ -94,3 +96,4 @@ Nginx 单入口分流：`/` → web，`/api` → api，`/collab` → collab（We
 4. 协同 Token 短时效（5min, `aud=collab`），collab 不落业务数据、不做权限判断、不直连 PostgreSQL（经 /internal）。
 5. 保存文档后需异步刷新切片与摘要/标签（**ARQ 队列**，幂等 + 重试），不要让 AI 调用阻塞保存请求。
 6. AI 调用统一走 `ai_service`，模型与供应商通过环境变量切换（OpenAI 兼容 SDK）；额度用 Redis `INCR` 原子预扣，计量写入 `ai_usage_logs`，超日额度返回 `42901`。
+7. 写接口必须支持 `X-Request-Id` 幂等（5 分钟内重复请求返回首次结果快照）与滑动窗口限流；创建/删除/分享/改权限等敏感操作必须写 `audit_logs`（只增不改，BIGSERIAL + 异步落库）。
